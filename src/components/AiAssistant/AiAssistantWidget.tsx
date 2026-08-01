@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
   X,
@@ -46,10 +46,28 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
   const [inputQuery, setInputQuery] = useState<string>('');
   const [isThinking, setIsThinking] = useState<boolean>(false);
 
+  /* Scroll Ref */
+  const chatMessagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
   /* Randomizer State */
   const [rouletteSource, setRouletteSource] = useState<'watchlist' | 'trending' | 'genre'>('trending');
   const [isSpinning, setIsSpinning] = useState<boolean>(false);
   const [randomPick, setRandomPick] = useState<Movie | null>(null);
+
+  /* Auto-scroll to bottom whenever messages change or AI finishes thinking */
+  const scrollToBottom = () => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isThinking, activeTab]);
 
   /* Send Message Logic */
   const handleSendMessage = async (customPrompt?: string) => {
@@ -99,7 +117,6 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
     setIsSpinning(true);
     setRandomPick(null);
 
-    // Simulate wheel spin delay
     setTimeout(async () => {
       try {
         const movie = await spinRandomizer(rouletteSource, userWatchlist);
@@ -208,7 +225,7 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
               </div>
 
               {/* Chat Stream */}
-              <div className="chat-messages-container">
+              <div className="chat-messages-container" ref={chatContainerRef}>
                 {messages.map((msg) => (
                   <div
                     key={msg.id}
@@ -248,8 +265,12 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
                                 className="chat-rec-poster"
                               />
                               <div className="chat-rec-info">
-                                <h4 className="chat-rec-title">{movie.Title}</h4>
-                                <span className="chat-rec-year">{movie.Year} • {movie.Type}</span>
+                                <h4 className="chat-rec-title" title={movie.Title}>
+                                  {movie.Title}
+                                </h4>
+                                <span className="chat-rec-year">
+                                  {movie.Year} • {movie.Type}
+                                </span>
                                 <button type="button" className="chat-rec-view-btn">
                                   <span>{t('viewMovieDetails')}</span>
                                   <ArrowRight className="rec-arrow" />
@@ -274,6 +295,7 @@ export const AiAssistantWidget: React.FC<AiAssistantWidgetProps> = ({
                     </div>
                   </div>
                 )}
+                <div ref={chatMessagesEndRef} />
               </div>
 
               {/* Chat Input Bar */}
