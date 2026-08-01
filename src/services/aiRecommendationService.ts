@@ -31,7 +31,7 @@ const GENRE_KEYWORDS: Record<string, string[]> = {
 };
 
 /**
- * Removes conversational filler words to isolate the core search intent.
+ * Clean user input to extract core search terms for fallback.
  */
 function cleanUserPrompt(prompt: string): string {
   return prompt
@@ -42,6 +42,70 @@ function cleanUserPrompt(prompt: string): string {
 }
 
 /**
+ * Calls Google Gemini REST API (Free Tier) to get intelligent movie recommendations.
+ */
+async function getGeminiRecommendation(
+  prompt: string,
+  userWatchlist: Movie[] = [],
+  lang: 'en' | 'ko' = 'en',
+  apiKey: string
+): Promise<{ text: string; searchTitles: string[] } | null> {
+  try {
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const watchlistTitles = userWatchlist.map((m) => m.Title).join(', ');
+    const languageInstruction = lang === 'ko' ? 'Korean' : 'English';
+
+    const systemPrompt = `You are Mubi AI, a movie cinema expert.
+Analyze the user's request and provide movie or TV series recommendations.
+If user mentions a specific year, genre, mood, or context, strictly pick accurate titles matching that request.
+Respond in valid JSON with two fields:
+1. "reply": A friendly 1-2 sentence recommendation text in ${languageInstruction}.
+2. "searchTitles": An array of 1 to 3 exact movie/series titles to search on OMDB.
+
+User Watch Later list titles (for context): ${watchlistTitles || 'None'}
+User Request: "${prompt}"`;
+
+    const response = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: systemPrompt }],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.7,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    const jsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!jsonText) return null;
+
+    const parsed = JSON.parse(jsonText);
+    return {
+      text: parsed.reply || (lang === 'ko' ? '추천 무비 결과입니다!' : 'Here are your recommendations!'),
+      searchTitles: Array.isArray(parsed.searchTitles) ? parsed.searchTitles : [],
+    };
+  } catch (err) {
+    console.warn('Gemini API call failed, falling back to smart heuristic engine:', err);
+    return null;
+  }
+}
+
+/**
  * Generates an AI recommendation based on a prompt or quick chip.
  */
 export async function generateAiRecommendation(
@@ -49,9 +113,41 @@ export async function generateAiRecommendation(
   userWatchlist: Movie[] = [],
   lang: 'en' | 'ko' = 'en'
 ): Promise<{ text: string; recommendations: Movie[] }> {
+  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+  // 🤖 STEP 1: Attempt Free-Tier Gemini LLM Recommendation if API key is provided
+  if (geminiApiKey && geminiApiKey.trim() !== '') {
+    const geminiResult = await getGeminiRecommendation(prompt, userWatchlist, lang, geminiApiKey);
+
+    if (geminiResult && geminiResult.searchTitles.length > 0) {
+      const moviePromises = geminiResult.searchTitles.map((title) =>
+        searchMovies(title).catch(() => [])
+      );
+      const searchResults = await Promise.all(moviePromises);
+
+      const foundMovies: Movie[] = [];
+      const uniqueIds = new Set<string>();
+
+      for (const res of searchResults) {
+        if (res.length > 0 && !uniqueIds.has(res[0].imdbID)) {
+          foundMovies.push(res[0]);
+          uniqueIds.add(res[0].imdbID);
+        }
+      }
+
+      if (foundMovies.length > 0) {
+        return {
+          text: geminiResult.text,
+          recommendations: foundMovies.slice(0, 3),
+        };
+      }
+    }
+  }
+
+  // 🧠 STEP 2: Heuristic Smart Engine (Fallback / Default when no API key)
   const normalized = prompt.toLowerCase().replace(/[-_]/g, ' ');
 
-  // 1. Watch Later / Library Intent
+  // Intent 1: Watch Later / Library
   if (
     normalized.includes('watch later') ||
     normalized.includes('watchlist') ||
@@ -79,12 +175,11 @@ export async function generateAiRecommendation(
     }
   }
 
-  // 2. K-Drama / Korean Cinema Intent (including space variations like "k drama", "k-drama", "korean")
+  // Intent 2: K-Drama / Korean Cinema
   const isKdramaIntent =
     normalized.includes('k drama') ||
     normalized.includes('kdrama') ||
     normalized.includes('korean') ||
-    normalized.includes('k drama') ||
     normalized.includes('한국') ||
     normalized.includes('드라마');
 
@@ -116,7 +211,7 @@ export async function generateAiRecommendation(
     return { text, recommendations: recs };
   }
 
-  // 3. Sci-Fi / Mind-bending Intent
+  // Intent 3: Sci-Fi / Mind-bending
   if (
     normalized.includes('sci fi') ||
     normalized.includes('scifi') ||
@@ -134,7 +229,7 @@ export async function generateAiRecommendation(
     return { text, recommendations: movies.slice(0, 2) };
   }
 
-  // 4. Action Intent
+  // Intent 4: Action
   if (
     normalized.includes('action') ||
     normalized.includes('액션') ||
@@ -151,7 +246,7 @@ export async function generateAiRecommendation(
     return { text, recommendations: movies.slice(0, 2) };
   }
 
-  // 5. General / Specific Title Search after cleaning conversational noise
+  // Intent 5: General keyword search after cleaning prompt
   const cleanedSearch = cleanUserPrompt(prompt);
   if (cleanedSearch.length >= 2) {
     try {
@@ -169,7 +264,7 @@ export async function generateAiRecommendation(
     }
   }
 
-  // 6. Fallback Trending
+  // Intent 6: Fallback Trending
   const randomKeyword = TRENDING_KEYWORDS[Math.floor(Math.random() * TRENDING_KEYWORDS.length)];
   const fallbackMovies = await searchMovies(randomKeyword);
 
