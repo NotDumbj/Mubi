@@ -1,0 +1,44 @@
+.category-filter-wrapper {
+  position: relative;
+  width: 100%;
+  margin: 1.5rem 0 2rem 0;
+  display: flex;
+  justify-content: center;
+}
+
+.category-filter-scroll {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  overflow-x: auto;
+  padding: 0.5rem 0.25rem 0.75rem 0.25rem;
+  width: 100%;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+.category-filter-scroll::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* Side Gradients for horizontal scroll hint */
+.category-filter-wrapper::before,
+.category-filter-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.category-filter-wrapper::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg-color), transparent);
+}
+
+.category-filter-wrapper::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg-color), transparent);
+}

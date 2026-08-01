@@ -1,0 +1,291 @@
+.movie-card {
+  position: relative;
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.3s ease;
+  user-select: none;
+}
+
+.movie-card.clickable {
+  cursor: pointer;
+}
+
+/* Kokonut UI Mouse Spotlight overlay */
+.spotlight-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(255, 255, 255, 0.08),
+    transparent 40%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 3;
+}
+
+.movie-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(229, 9, 20, 0.4);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(229, 9, 20, 0.15);
+}
+
+.movie-card:hover .spotlight-overlay {
+  opacity: 1;
+}
+
+.movie-poster-container {
+  position: relative;
+  width: 100%;
+  padding-top: 145%;
+  background: #18181c;
+  overflow: hidden;
+}
+
+.movie-card-poster {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1), filter 0.5s ease;
+}
+
+.movie-card:hover .movie-card-poster {
+  transform: scale(1.06);
+}
+
+.poster-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(15, 15, 20, 0.95) 0%,
+    rgba(15, 15, 20, 0.2) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* Poster Hover Details Hint */
+.poster-info-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.85);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 4;
+}
+
+.movie-card:hover .poster-info-hint {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.hint-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--accent-primary);
+}
+
+/* Action Buttons Row (Top-Right Overlay) */
+.card-actions-row {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  z-index: 5;
+}
+
+.action-btn,
+.favourite-button {
+  background: rgba(10, 10, 15, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-full);
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #ffffff;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.action-icon,
+.fav-icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s ease, color 0.2s ease, fill 0.2s ease;
+}
+
+/* Hover Physics */
+.action-btn:hover,
+.favourite-button:hover {
+  transform: scale(1.12);
+}
+
+.action-btn:active,
+.favourite-button:active {
+  transform: scale(0.9) !important;
+}
+
+/* Favourite Button */
+.favourite-button:hover {
+  background: rgba(229, 9, 20, 0.9);
+  border-color: #ef4444;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+.favourite-button.is-favourite {
+  background: rgba(225, 29, 72, 0.95);
+  border-color: #f43f5e;
+  box-shadow: 0 0 16px rgba(244, 63, 94, 0.6);
+}
+
+.fav-icon.filled {
+  fill: #ffffff;
+  color: #ffffff;
+}
+
+/* Watch Later Button */
+.action-btn.watch-later:hover {
+  background: rgba(59, 130, 246, 0.9);
+  border-color: #60a5fa;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.5);
+}
+
+.action-btn.watch-later.active {
+  background: rgba(37, 99, 235, 0.95);
+  border-color: #60a5fa;
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.6);
+}
+
+.action-btn.watch-later .action-icon.filled {
+  fill: #ffffff;
+  color: #ffffff;
+}
+
+/* Watched Button */
+.action-btn.watched:hover {
+  background: rgba(16, 185, 129, 0.9);
+  border-color: #34d399;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
+}
+
+.action-btn.watched.active {
+  background: rgba(5, 150, 105, 0.95);
+  border-color: #34d399;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.6);
+}
+
+.action-btn.watched .action-icon.filled {
+  fill: #ffffff;
+  color: #ffffff;
+}
+
+/* Badges */
+.poster-badges {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 4;
+}
+
+.type-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #e2e8f0;
+}
+
+.badge-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--accent-primary);
+}
+
+/* Movie Card Info */
+.movie-card-info {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 1;
+  background: rgba(12, 12, 16, 0.9);
+}
+
+.movie-card-title {
+  font-family: var(--font-heading);
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s ease;
+}
+
+.movie-card:hover .movie-card-title {
+  color: #ffffff;
+}
+
+.movie-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.meta-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+}
