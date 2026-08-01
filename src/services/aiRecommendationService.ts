@@ -9,40 +9,88 @@ export interface ChatMessage {
   timestamp: Date;
 }
 
-const TRENDING_KEYWORDS = [
-  'Inception',
-  'Interstellar',
-  'Parasite',
-  'The Dark Knight',
-  'Dune',
-  'Avengers',
-  'Squid Game',
-  'Spider-Man',
-  'Matrix',
-  'Gladiator',
-];
-
-const GENRE_KEYWORDS: Record<string, string[]> = {
-  scifi: ['Inception', 'Interstellar', 'Blade Runner', 'Matrix', 'Dune', 'Tenet', 'Arrival'],
-  kdrama: ['Squid Game', 'Vincenzo', 'Hometown Cha-Cha-Cha', 'Parasite', 'Crash Landing on You', 'Kingdom', 'Train to Busan', 'All of Us Are Dead'],
-  kdrama2021: ['Squid Game', 'Vincenzo', 'Hometown Cha-Cha-Cha', 'Hellbound', 'My Name', 'Taxi Driver', 'Happiness'],
-  action: ['The Dark Knight', 'John Wick', 'Mad Max', 'Top Gun', 'Mission Impossible'],
-  classics: ['The Godfather', 'Pulp Fiction', 'Forrest Gump', 'Fight Club', 'Goodfellas'],
-};
+const DEFAULT_TRENDING = ['Inception', 'Interstellar', 'Parasite', 'Squid Game', 'The Dark Knight', 'Dune'];
 
 /**
- * Clean user input to extract core search terms for fallback.
+ * Deduplicates a list of movies by cleaned title string so duplicate titles are never returned.
+ */
+function deduplicateMoviesByTitle(movies: Movie[]): Movie[] {
+  const seenTitles = new Set<string>();
+  const result: Movie[] = [];
+
+  for (const movie of movies) {
+    const cleanTitle = movie.Title.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+    if (cleanTitle && !seenTitles.has(cleanTitle)) {
+      seenTitles.add(cleanTitle);
+      result.push(movie);
+    }
+  }
+  return result;
+}
+
+/**
+ * Clean user input to extract core search intent.
  */
 function cleanUserPrompt(prompt: string): string {
   return prompt
     .toLowerCase()
-    .replace(/\b(can|you|u|please|share|me|some|show|give|recommend|find|best|good|top|movie|movies|film|films|series|tv|show|shows|watch|watching)\b/gi, '')
+    .replace(/\b(can|you|u|please|share|me|some|show|give|recommend|find|best|good|top|hit|hits|movie|movies|film|films|series|tv|show|shows|watch|watching)\b/gi, '')
     .replace(/[^\w\s]/gi, '')
     .trim();
 }
 
 /**
- * Calls Google Gemini REST API (Free Tier) to get intelligent movie recommendations.
+ * Open Knowledge Engine: Queries Wikipedia's open API to dynamically discover
+ * real titles for ANY arbitrary user request (genres, years, countries, actors, themes).
+ */
+async function discoverTitlesViaWikipedia(prompt: string): Promise<string[]> {
+  try {
+    let wikiQuery = cleanUserPrompt(prompt);
+
+    // Smart synonym expansion for open discovery
+    wikiQuery = wikiQuery
+      .replace(/\bkdramas?\b/gi, 'South Korean television series')
+      .replace(/\bk drama\b/gi, 'South Korean drama series')
+      .replace(/\bkorean dramas?\b/gi, 'South Korean television series')
+      .replace(/\banime\b/gi, 'anime series')
+      .replace(/\bscifi\b/gi, 'science fiction films')
+      .replace(/\bhorror\b/gi, 'horror films')
+      .replace(/\bcomedy\b/gi, 'comedy films');
+
+    const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
+      wikiQuery
+    )}&format=json&origin=*`;
+
+    const res = await fetch(url);
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    const searchResults = data?.query?.search || [];
+
+    const titles: string[] = searchResults
+      .map((item: { title: string }) => item.title)
+      .filter((title: string) => {
+        const lower = title.toLowerCase();
+        return (
+          !lower.startsWith('list of') &&
+          !lower.startsWith('index of') &&
+          !lower.startsWith('category:') &&
+          !lower.startsWith('template:') &&
+          !lower.includes('wikipedia:') &&
+          !lower.includes('discography') &&
+          !lower.includes('filmography')
+        );
+      });
+
+    return titles.slice(0, 5);
+  } catch (err) {
+    console.warn('Wikipedia discovery API failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Calls Google Gemini REST API (Free Tier) to get intelligent movie recommendations if configured.
  */
 async function getGeminiRecommendation(
   prompt: string,
@@ -85,13 +133,10 @@ User Request: "${prompt}"`;
       }),
     });
 
-    if (!response.ok) {
-      return null;
-    }
+    if (!response.ok) return null;
 
     const data = await response.json();
     const jsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
     if (!jsonText) return null;
 
     const parsed = JSON.parse(jsonText);
@@ -100,13 +145,14 @@ User Request: "${prompt}"`;
       searchTitles: Array.isArray(parsed.searchTitles) ? parsed.searchTitles : [],
     };
   } catch (err) {
-    console.warn('Gemini API call failed, falling back to smart heuristic engine:', err);
+    console.warn('Gemini API call failed, falling back to open discovery engine:', err);
     return null;
   }
 }
 
 /**
- * Generates an AI recommendation based on a prompt or quick chip.
+ * Main AI Recommendation Generator.
+ * Uses Gemini LLM API (if VITE_GEMINI_API_KEY set) or Wikipedia Open Knowledge Graph + OMDB Hydration.
  */
 export async function generateAiRecommendation(
   prompt: string,
@@ -115,7 +161,7 @@ export async function generateAiRecommendation(
 ): Promise<{ text: string; recommendations: Movie[] }> {
   const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
-  // 🤖 STEP 1: Attempt Free-Tier Gemini LLM Recommendation if API key is provided
+  // 🤖 1. Primary: Google Gemini Free-Tier LLM API (if key present in .env)
   if (geminiApiKey && geminiApiKey.trim() !== '') {
     const geminiResult = await getGeminiRecommendation(prompt, userWatchlist, lang, geminiApiKey);
 
@@ -125,29 +171,23 @@ export async function generateAiRecommendation(
       );
       const searchResults = await Promise.all(moviePromises);
 
-      const foundMovies: Movie[] = [];
-      const uniqueIds = new Set<string>();
-
+      const allFetched: Movie[] = [];
       for (const res of searchResults) {
-        if (res.length > 0 && !uniqueIds.has(res[0].imdbID)) {
-          foundMovies.push(res[0]);
-          uniqueIds.add(res[0].imdbID);
-        }
+        if (res.length > 0) allFetched.push(res[0]);
       }
 
-      if (foundMovies.length > 0) {
+      const deduplicated = deduplicateMoviesByTitle(allFetched);
+      if (deduplicated.length > 0) {
         return {
           text: geminiResult.text,
-          recommendations: foundMovies.slice(0, 3),
+          recommendations: deduplicated.slice(0, 3),
         };
       }
     }
   }
 
-  // 🧠 STEP 2: Heuristic Smart Engine (Fallback / Default when no API key)
-  const normalized = prompt.toLowerCase().replace(/[-_]/g, ' ');
-
-  // Intent 1: Watch Later / Library
+  // 🧠 2. Watch Later / Library Intent
+  const normalized = prompt.toLowerCase();
   if (
     normalized.includes('watch later') ||
     normalized.includes('watchlist') ||
@@ -156,7 +196,7 @@ export async function generateAiRecommendation(
   ) {
     if (userWatchlist.length > 0) {
       const shuffled = [...userWatchlist].sort(() => Math.random() - 0.5);
-      const picked = shuffled.slice(0, Math.min(2, shuffled.length));
+      const picked = deduplicateMoviesByTitle(shuffled).slice(0, Math.min(2, userWatchlist.length));
 
       const text =
         lang === 'ko'
@@ -164,116 +204,65 @@ export async function generateAiRecommendation(
           : `Here are top picks directly from your Watch Later collection! 🎬`;
 
       return { text, recommendations: picked };
-    } else {
-      const trendingResults = await searchMovies('Interstellar');
+    }
+  }
+
+  // 🌐 3. Creative Open Knowledge Engine: Wikipedia Search + OMDB Poster Hydration
+  // Works dynamically for ANY prompt, year, mood, genre, actor, or country without hardcoded keywords!
+  const wikiTitles = await discoverTitlesViaWikipedia(prompt);
+
+  if (wikiTitles.length > 0) {
+    const omdbPromises = wikiTitles.map((title) => searchMovies(title).catch(() => []));
+    const omdbResults = await Promise.all(omdbPromises);
+
+    const candidates: Movie[] = [];
+    for (const res of omdbResults) {
+      if (res.length > 0) {
+        candidates.push(res[0]);
+      }
+    }
+
+    const deduplicated = deduplicateMoviesByTitle(candidates);
+
+    if (deduplicated.length > 0) {
+      const replyText =
+        lang === 'ko'
+          ? `'${prompt}' 검색 의도를 분석해 엄선한 추천작입니다! ✨`
+          : `Here are curated cinema recommendations matching "${prompt}"! ✨`;
+
+      return {
+        text: replyText,
+        recommendations: deduplicated.slice(0, 2),
+      };
+    }
+  }
+
+  // 4. Direct OMDB Title Search fallback
+  const cleanedQuery = cleanUserPrompt(prompt);
+  if (cleanedQuery.length >= 2) {
+    const directResults = await searchMovies(cleanedQuery);
+    const deduplicated = deduplicateMoviesByTitle(directResults);
+
+    if (deduplicated.length > 0) {
       const text =
         lang === 'ko'
-          ? `아직 '나중에 볼 영화'에 보관된 명작이 없어, 대신 시네마 트렌딩 명작을 추천합니다!`
-          : `Your Watch Later list is currently empty, so I picked some acclaimed trending hits for you!`;
+          ? `'${cleanedQuery}' 무비 AI 수집 결과입니다! ✨`
+          : `Based on your request "${cleanedQuery}", here are matching titles! ✨`;
 
-      return { text, recommendations: trendingResults.slice(0, 2) };
+      return { text, recommendations: deduplicated.slice(0, 2) };
     }
   }
 
-  // Intent 2: K-Drama / Korean Cinema
-  const isKdramaIntent =
-    normalized.includes('k drama') ||
-    normalized.includes('kdrama') ||
-    normalized.includes('korean') ||
-    normalized.includes('한국') ||
-    normalized.includes('드라마');
-
-  if (isKdramaIntent) {
-    const is2021 = normalized.includes('2021');
-    const keywordList = is2021 ? GENRE_KEYWORDS.kdrama2021 : GENRE_KEYWORDS.kdrama;
-    const pickedKeyword = keywordList[Math.floor(Math.random() * keywordList.length)];
-    const secondKeyword = keywordList[(keywordList.indexOf(pickedKeyword) + 1) % keywordList.length];
-
-    const [firstBatch, secondBatch] = await Promise.all([
-      searchMovies(pickedKeyword),
-      searchMovies(secondKeyword),
-    ]);
-
-    const combined = [...firstBatch, ...secondBatch];
-    const uniqueMap = new Map<string, Movie>();
-    combined.forEach((m) => uniqueMap.set(m.imdbID, m));
-
-    const recs = Array.from(uniqueMap.values()).slice(0, 2);
-
-    const text = is2021
-      ? lang === 'ko'
-        ? `2021년을 뜨겁게 달군 히트 K-드라마 & 한국 영화 추천입니다! 💖`
-        : `Here are acclaimed 2021 K-Dramas & Korean hits you should check out! 💖`
-      : lang === 'ko'
-        ? `세계적으로 사랑받는 웰메이드 한국 영화 & K-드라마 추천입니다! 💖`
-        : `Here are critically acclaimed Korean films & K-Dramas you'll love! 💖`;
-
-    return { text, recommendations: recs };
-  }
-
-  // Intent 3: Sci-Fi / Mind-bending
-  if (
-    normalized.includes('sci fi') ||
-    normalized.includes('scifi') ||
-    normalized.includes('sf') ||
-    normalized.includes('mind') ||
-    normalized.includes('반전')
-  ) {
-    const keyword = GENRE_KEYWORDS.scifi[Math.floor(Math.random() * GENRE_KEYWORDS.scifi.length)];
-    const movies = await searchMovies(keyword);
-    const text =
-      lang === 'ko'
-        ? `경이로운 몰입감을 자랑하는 추천 SF & 마인드 벤딩 작품입니다! 🚀`
-        : `Here are mind-bending Sci-Fi masterpieces that will expand your imagination! 🚀`;
-
-    return { text, recommendations: movies.slice(0, 2) };
-  }
-
-  // Intent 4: Action
-  if (
-    normalized.includes('action') ||
-    normalized.includes('액션') ||
-    normalized.includes('thriller') ||
-    normalized.includes('스릴러')
-  ) {
-    const keyword = GENRE_KEYWORDS.action[Math.floor(Math.random() * GENRE_KEYWORDS.action.length)];
-    const movies = await searchMovies(keyword);
-    const text =
-      lang === 'ko'
-        ? `손에 땀을 쥐게 하는 강렬한 액션 무비 추천입니다! ⚡`
-        : `Here are pulse-pounding Action & Thriller blockbusters! ⚡`;
-
-    return { text, recommendations: movies.slice(0, 2) };
-  }
-
-  // Intent 5: General keyword search after cleaning prompt
-  const cleanedSearch = cleanUserPrompt(prompt);
-  if (cleanedSearch.length >= 2) {
-    try {
-      const results = await searchMovies(cleanedSearch);
-      if (results.length > 0) {
-        const text =
-          lang === 'ko'
-            ? `'${cleanedSearch}' 관련 무비 AI 분석 결과 추천작입니다! ✨`
-            : `Based on your request "${cleanedSearch}", here are curated movie recommendations! ✨`;
-
-        return { text, recommendations: results.slice(0, 2) };
-      }
-    } catch {
-      // Continue to fallback
-    }
-  }
-
-  // Intent 6: Fallback Trending
-  const randomKeyword = TRENDING_KEYWORDS[Math.floor(Math.random() * TRENDING_KEYWORDS.length)];
+  // 5. Ultimate Fallback: Acclaimed Cinema Hits
+  const randomKeyword = DEFAULT_TRENDING[Math.floor(Math.random() * DEFAULT_TRENDING.length)];
   const fallbackMovies = await searchMovies(randomKeyword);
 
   const text =
     lang === 'ko'
-      ? `오늘 감상하기 완벽한 무비 어시스턴트 강력 추천 작품입니다! 🌟`
+      ? `오늘 감상하기 완벽한 무비 어시스턴트 추천 작품입니다! 🌟`
       : `Here is a high-rated cinema pick curated specially for your movie night! 🌟`;
 
-  return { text, recommendations: fallbackMovies.slice(0, 2) };
+  return { text, recommendations: deduplicateMoviesByTitle(fallbackMovies).slice(0, 2) };
 }
 
 /**
@@ -290,19 +279,16 @@ export async function spinRandomizer(
   }
 
   if (source === 'trending') {
-    const randomKeyword = TRENDING_KEYWORDS[Math.floor(Math.random() * TRENDING_KEYWORDS.length)];
+    const randomKeyword = DEFAULT_TRENDING[Math.floor(Math.random() * DEFAULT_TRENDING.length)];
     const movies = await searchMovies(randomKeyword);
     if (movies.length === 0) return null;
     return movies[Math.floor(Math.random() * movies.length)];
   }
 
-  // 'genre' source
-  const allGenreKeys = Object.keys(GENRE_KEYWORDS);
-  const selectedCat = allGenreKeys[Math.floor(Math.random() * allGenreKeys.length)];
-  const keywords = GENRE_KEYWORDS[selectedCat];
-  const chosenKeyword = keywords[Math.floor(Math.random() * keywords.length)];
+  const discoveryKeywords = ['Sci-Fi', 'Korean Drama', 'Action', 'Thriller', 'Animation'];
+  const chosen = discoveryKeywords[Math.floor(Math.random() * discoveryKeywords.length)];
 
-  const movies = await searchMovies(chosenKeyword);
+  const movies = await searchMovies(chosen);
   if (movies.length === 0) return null;
   return movies[Math.floor(Math.random() * movies.length)];
 }
